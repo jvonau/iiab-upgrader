@@ -3,7 +3,7 @@
 set -e                                   # Exit on error (avoids snowballing)
 export DEBIAN_FRONTEND=noninteractive    # Bypass (most!) interactive questions
 SCRIPT=iiab-upgrade
-RELEASE=4
+RELEASE=1
 CURR_VER=""             # Ansible version you currently have installed
 GOOD_VER="2.10.1"       # Trigger point for anisble forced reinstall
 BASEDIR=/opt/iiab
@@ -16,10 +16,6 @@ REINSTALL=""
 INTERACTIVE=0
 UPDATE=0
 MASTER=1
-TEST=jv
-#IIABTEST=iiab-ng-7.2
-IIABTEST=""
-MIN_RPI_KERN=1336
 SELFUPDATE_SCRIPT="/tmp/.updateScript.sh"
 
 # scrape the command line
@@ -38,25 +34,6 @@ fi
 if [ "$1" = "--reinstall" ]; then
     rm $FLAGS/iiab*complete || true
     REINSTALL="--reinstall"
-fi
-
-# Verify that Raspbian is running a recent enough kernel.  As Raspbian
-# kernel 1333 has wifi issues https://github.com/iiab/iiab/issues/2497.
-check_kernel(){
-CURR_KERN=`uname -v | awk '{print $1}' | sed -e s'/#//'`
-echo "Found Kernel ""$CURR_KERN"
-if version_gt $MIN_RPI_KERN $CURR_KERN; then
-    echo -e "\033[31;5mWARNING: Kernel ""$MIN_RPI_KERN"" or higher required with Raspbian.\033[0m"
-    echo -e "\033[31;5mPLEASE RUN 'sudo apt update' then 'sudo apt install raspberrypi-kernel' then reboot.\033[0m"
-    echo -e "\033[31;5mTHEN recheck the kernel version with iiab-upgrade --kernel-check \033[0m"
-    echo -e "\033[31;5mPlease check with developers before running the below command"
-    echo -e "\033[31;5mTHEN IF NEC run 'sudo rpi-update' to install a more recent kernel \033[0m"
-fi
-}
-
-if [ "$1" = "--kernel-check" ]; then
-    check_kernel
-    exit 0
 fi
 
 # Everything else needs to be run as root
@@ -96,10 +73,10 @@ function upgrade_source(){
         upg_path=""
     else
         echo " IIAB still not playing nice"
-        for REV in $(cat $BASEDIR/iiab-factory/upgrade_roles | awk '{print $1}'); do
+        for REV in $(cat $BASEDIR/iiab-upgrader/upgrade_roles | awk '{print $1}'); do
             NEWREV=$REV
         done
-        upg_path=$BASEDIR/iiab-factory/
+        upg_path=$BASEDIR/iiab-upgrader/
     fi
 }
 
@@ -110,11 +87,6 @@ function update_master(){
         echo -e "\nUpdating iiab"
         git checkout master
         git pull -q
-        if ! [ x$IIABTEST == "x" ]; then
-            git branch -D $IIABTEST || true
-            git checkout -b $IIABTEST
-            git pull -q https://github.com/jvonau/IIAB-NG.git $IIABTEST
-        fi
     fi
     cd $BASEDIR
     if [ -d iiab-admin-console ]; then
@@ -140,9 +112,9 @@ function check_revision(){
 function update_self() {
     echo " *** Performing self-update"
     cd $BASEDIR
-    if [ -d iiab-factory ]; then
-        echo -e "\nUpdating iiab-factory"
-        cd iiab-factory
+    if [ -d iiab-upgrader ]; then
+        echo -e "\nUpdating iiab-upgrader"
+        cd iiab-upgrader
         git checkout master
         git pull -q
         NEW_VERSION=$(grep RELEASE $SCRIPT | awk -F = '{print $2}' | head -n 1)
@@ -166,16 +138,6 @@ EOF
 # a consistent # of decimal points e.g. "if version_gt w.x.y.z a.b.c.d; then"
 version_gt() { [ "$(printf '%s\n' "$@" | sort -V | head -1)" != "$1" ]; }
 
-# A. Subroutine for B. and D.  Returns true (0) if username ($1) exists with password ($2)
-check_user_pwd() {
-    # $meth (hashing method) is typically '6' which implies 5000 rounds
-    # of SHA-512 per /etc/login.defs -> /etc/pam.d/common-password
-    meth=$(grep "^$1:" /etc/shadow | cut -d: -f2 | cut -d$ -f2)
-    salt=$(grep "^$1:" /etc/shadow | cut -d: -f2 | cut -d$ -f3)
-    hash=$(grep "^$1:" /etc/shadow | cut -d: -f2 | cut -d$ -f4)
-    [ $(python3 -c "import crypt; print(crypt.crypt('$2', '\$$meth\$$salt'))") == "\$$meth\$$salt\$$hash" ]
-}
-
 # start exec here
 T_Start=`date`
 update_self
@@ -193,33 +155,6 @@ if [ `check_branch` -gt 0 ]; then
     fi
 fi
 
-if [ $INTERACTIVE == 1 ]; then
-    # B. Ask for password change if pi/raspberry default remains
-    if check_user_pwd "pi" "raspberry"; then
-        PASSWORD=$(whiptail --passwordbox "
-Raspberry Pi's are COMPROMISED often if the default password is not changed!
-What password do you want for GNU/Linux user 'pi' ?
-press [Enter] for no change " 12 78 --title "password dialog" 3>&1 1>&2 2>&3)
-        echo pi:$PASSWORD | chpasswd 2>&1 > /dev/null || true    # Overrides 'set -e'
-    fi
-
-    # C. Create user 'iiab-admin' as nec, with default password
-    if ! id -u iiab-admin > /dev/null 2> /dev/null; then
-        useradd iiab-admin
-        echo iiab-admin:g0adm1n | chpasswd
-    fi
-
-    if check_user_pwd "iiab-admin" "g0adm1n"; then
-    # D. Ask for password change if iiab-admin/g0adm1n default remains
-        PASSWORD2=$(whiptail --passwordbox "
-User 'iiab-admin' retains default password 'g0adm1n' per http://FAQ.IIAB.IO
-This is for login to Internet-in-a-Box's Admin Console (http://box.lan/admin)
-What password do you want for GNU/Linux user 'iiab-admin' ?
-press [Enter] for no change " 12 78 --title "password dialog" 3>&1 1>&2 2>&3)
-        echo iiab-admin:$PASSWORD2 | chpasswd 2>&1 > /dev/null || true    # Overrides 'set -e'
-    fi
-fi
-
 if [ $MASTER == 1 ]; then
     update_master
 fi
@@ -231,61 +166,6 @@ if [ -f $FLAGDIR/iiab-complete ] && [ $UPDATE == 0 ]; then
     exit 0
 fi
 
-mkdir -p $FLAGDIR
-# E. Position & customize $CONFDIR/local_vars.yml
-cd $CONFDIR
-if [ -f local_vars.yml ]; then
-
-    # FUTURE: Test if their local_vars.yml is sufficiently version-compatible !
-
-    echo -e "\n\n  EXISTING $CONFDIR/local_vars.yml is being used to install Internet-in-a-Box\n"
-
-    echo -e "   🚂 🚃 🚄 🚅 🚆 🚇 🚈 🚉 🚊 🚋 🚌 🚍 🚎 🚏 🚐 🚑 🚒 🚚 🚛 🚜 🚞 🚟 🚠 🚡 🚲\n"
-
-    echo -e "                     Google 'local_vars.yml' to learn more!"
-else
-    echo -e "\n\nInstalling Internet-in-a-Box requires $CONFDIR/local_vars.yml"
-    echo -e "Do you want (1) 🚵 MIN-sized (2) 🚢🚣 MEDIUM-sized or (3) 🚂🚃🚃 BIG-sized?\n"
-
-    echo -e "These take about 1, 2 or 3 hours on an older Raspberry Pi 3 or 3 B+, depending"
-    echo -e "on Internet speed, CPU speed/temperature and microSD card/disk speed.  Please"
-    echo -e "use a Raspberry Pi 4 or x86_64 to install in about an hour or less !\n"
-
-    echo -e 'See "What can I do with E-books and Internet-in-a-Box?" and "What services'
-    echo -e '(IIAB apps) are suggested during installation?" within http://FAQ.IIAB.IO\n'
-
-    echo -n "Please type 1, 2 or 3 then press [ENTER]: "
-    local_vars_size=""
-    if [ "$INTERACTIVE" == 1 ]; then
-        read local_vars_size < /dev/tty
-    fi
-    echo
-    case $local_vars_size in
-        1)
-            cp $BASEDIR/iiab/vars/local_vars_min.yml local_vars.yml
-            ;;
-        3)
-            cp $BASEDIR/iiab/vars/local_vars_big.yml local_vars.yml
-            ;;
-        *)
-            cp $BASEDIR/iiab/vars/local_vars_medium.yml local_vars.yml
-            ;;
-    esac
-
-    echo -en "\nEdit /etc/iiab/local_vars.yml to customize your Internet-in-a-Box? [Y/n] "
-    ans="n"
-    if [ $INTERACTIVE == 1 ]; then
-        read ans < /dev/tty
-    fi
-    if [ "$ans" == "y" ] || [ "$ans" == "Y" ]; then
-        exit 0
-#        echo -en "ctrl x to save and exit"
-#        sleep 2
-#        nano /etc/iiab/local_vars.yml
-    fi
-fi
-
-# F. Mandate OS SECURITY/UPDATES if 'apt update' has any (IF SO REBOOT)
 # Educate implementer while waiting for 'apt update'
 echo -e "\n\n ██████████████████████████████████████████████████████████████████████████████████████"
 echo -e " ██                                                                                  ██"
@@ -294,37 +174,10 @@ echo -e " ██                                                                
 echo -e " ██████████████████████████████████████████████████████████████████████████████████████"
 echo -e "\n"
 if [ $INTERACTIVE == 1 ]; then
-    echo -ne "\nHit [ENTER] to confirm you'll TRY TO RERUN 'sudo iiab' IF THERE IS A PROBLEM: "
+    echo -ne "\nHit [ENTER] to confirm you'll TRY TO RERUN 'sudo iiab-upgrade' IF THERE IS A PROBLEM: "
     read ans < /dev/tty
 fi
 
-echo -e "\n\n'apt update' is checking for OS updates...\n"
-#echo -e "2019-07-11 TEMP WORKAROUND FOR RASPBIAN BUSTER'S testing->stable apt GLITCH...\nDetails @ https://github.com/iiab/iiab/issues/1856\n"
-#apt -y update || true    # Overrides 'set -e'
-#echo -e "\nNOW THE REAL 'apt update' WILL RUN...\n"
-
-# catch's ansible updates when apt runs
-$APT_PATH -qq update > /tmp/apt.stdout 2> /tmp/apt.stderr || true    # Overrides 'set -e'
-if [ $(wc -c < /tmp/apt.stderr) -gt 82 ]; then    # apt.stderr typically contains exactly 82 characters when there are no errors, no matter the primary locale, i.e. 3-line file "\nWARNING: apt does not have a stable CLI interface. Use with caution in scripts.\n\n" ...OR... in other cases more than 82, e.g. many lines of errors when apt is busy/locked/offline/etc
-    echo -e "'apt update' FAILED. VERIFY YOU'RE ONLINE and resolve all errors below:\n"
-    cat /tmp/apt.stderr
-    exit 1
-elif grep -q 'apt list --upgradable' /tmp/apt.stdout; then    # apt.stdout typically contains {"All packages are up to date.\n" [even if primary locale is French & Hindi!], "Todos los paquetes están actualizados.\n", "所有软件包均为最新。\n"} ...OR... {"5 packages can be upgraded. Run 'apt list --upgradable' to see them.\n" [even if primary locale is French & Hindi!], "Se puede actualizar 1 paquete. Ejecute «apt list --upgradable» para verlo.\n", "有 1 个软件包可以升级。请执行 ‘apt list --upgradable’ 来查看它们。\n"}
-    cat /tmp/apt.stdout
-    if [ "$INTERACTIVE" == 1 ]; then
-        echo -e "\nYour OS will now be upgraded...this takes time. THEN IT WILL AUTO-REBOOT.\n"
-        echo -n "Hit [ENTER] to confirm you'll RUN 'sudo iiab' AFTER IT REBOOTS: "
-        read ans < /dev/tty
-        echo
-        $APT_PATH -y dist-upgrade
-        reboot
-        exit 0    # Nec to avoid both output lines below (that confuse implementers!)
-    else
-        $APT_PATH -y dist-upgrade
-    fi
-fi
-cat /tmp/apt.stdout    # "All packages are up to date.\n"
-T_apt=`date`
 # think version_gt is choking on 2913 vs 2101 with the .'s removed but my 2.10.1 install skipped
 # ansible correctly when good_ver was 2.9.13. Changed back on the fly to 2.9.13 while live testing
 # and the install appears to not skip when 2.9.13 == 2.9.13 and we end up with the noted apt error.
@@ -345,13 +198,6 @@ fi
 T_ansible=`date`
 
 ######################### INTERACTIVE STUFF IS ABOVE #########################
-
-# G. If RPi, lower reserve disk space from ~5% to 1%
-#if [ -f /proc/device-tree/model ] && grep -qi raspberry /proc/device-tree/model; then
-if [ $INTERACTIVE == 1 ] && [ -e /dev/mmcblk0p2 ]; then
-    echo -e "\n\nFound microSD card /dev/mmcblk0p2: Lower its reserve disk space from ~5% to 1%\n"
-    tune2fs -m 1 /dev/mmcblk0p2
-fi
 
 # I. Install Ansible + 2 IIAB repos
 #echo -e "\n\nINSTALL ANSIBLE + CORE IIAB SOFTWARE + ADMIN CONSOLE / CONTENT PACK MENUS...\n"
@@ -376,8 +222,6 @@ if [ $UPDATE == 1 ]; then
             force=$(echo $REV | awk '{print $2}')
             if [ "$force" == "calibre-web" ]; then # role directory & installed marker differ
                 force=calibreweb
-            elif [ "$force" == "httpd" ]; then # role directory & installed marker differ
-                force=apache
             elif [ "$force" == "osm-vector-maps" ]; then # role directory & installed marker differ
                 force=osm_vector_maps
             fi
@@ -386,13 +230,6 @@ if [ $UPDATE == 1 ]; then
         fi
     done < "$input"
 
-    if [ $OLDREV -lt 10 ]; then
-        ./runrole www_base
-    fi
-
-    if [ -f /etc/systemd/system/udev-reload ]; then
-        systemctl disable udev-reload
-    fi
     ./iiab-configure
     if ! [ -f upgrade_roles ]; then
         echo "manually update $IIABENV with IIAB_REVISION while 2500 is sidelined"
@@ -423,56 +260,35 @@ else
     echo -e "'admin_console_install: False' is in /etc/iiab/local_vars.yml\n"
 fi
 T_console=`date`
-# J. KA Lite prep
-if [ -d /library/ka-lite ]; then
-    echo -e "\n\nKA LITE REQUIRES 2 THINGS...\n"
-
-    echo -e "Register with KA Lite - just the anonymous registration...\n"
-    # /usr/bin/kalite venv wrapper invokes 'export KALITE_HOME=/library/ka-lite'
-    if [ ! -f $FLAGDIR/kalite-zone-complete ]; then
-        echo -e "Now running 'kalite manage generate_zone' ...\n"
-        kalite manage generate_zone || true    # Overrides 'set -e'
-        touch $FLAGDIR/kalite-zone-complete
-    else
-        echo -e "'kalite manage generate_zone' IS ALREADY COMPLETE -- per existence of:"
-        echo -e "$FLAGDIR/kalite-zone-complete\n"
-    fi
-
-    echo -e "\nInstall KA Lite's mandatory 0.9 GB English Pack... en.zip\n"
-    if [ ! -f $FLAGDIR/kalite-en.zip-complete ]; then
-        #echo -e 'Now retrieving it...\n'
-        cd /tmp
-        if [ -f en.zip ]; then
-            if [ $(wc -c < en.zip) -ne 929916955 ]; then
-                echo -e "\nERROR: /tmp/en.zip must be 929,916,955 bytes to proceed.\n" >&2
-                exit 1
-            else
-                echo -e "\nUsing existing /tmp/en.zip whose 929,916,955 byte size is correct!\n"
-            fi
-        else
-            wget http://pantry.learningequality.org/downloads/ka-lite/0.17/content/contentpacks/en.zip
-        fi
-        echo -e 'Now installing /tmp/en.zip into /library/ka-lite/content/*\n'
-        kalite manage retrievecontentpack local en en.zip
-        touch $FLAGDIR/kalite-en.zip-complete
-    else
-        echo -e 'kalite zip already done'
-    fi
-fi
-T_kalite=`date`
-# WARNING: /tmp/en.zip (and all stuff in /tmp) is auto-deleted during reboots
-# NEW WAY ABOVE - since 2018-07-03 - installs KA Lite's mandatory English Pack
-#
-# kalite manage retrievecontentpack download en
-# OLD WAY ABOVE - fails w/ sev ISPs per https://github.com/iiab/iiab/issues/871
-
-# K. Start BitTorrent downloads, e.g. if $CONFDIR/local_vars.yml requested any
-if [ $INTERACTIVE == 1 ] && (systemctl -q is-active transmission-daemon); then
-    echo -e "\n\nSTARTING BITTORRENT DOWNLOAD(S) for KA Lite...Please Monitor: http://box:9091\n"
-    transmission-remote -n Admin:changeme -t all --start
-fi
 
 touch $FLAGDIR/iiab-complete
+echo -e "\n\n'apt update' is checking for OS updates...\n"
+#echo -e "2019-07-11 TEMP WORKAROUND FOR RASPBIAN BUSTER'S testing->stable apt GLITCH...\nDetails @ https://github.com/iiab/iiab/issues/1856\n"
+#apt -y update || true    # Overrides 'set -e'
+#echo -e "\nNOW THE REAL 'apt update' WILL RUN...\n"
+
+# catch's ansible updates when apt runs
+$APT_PATH -qq update > /tmp/apt.stdout 2> /tmp/apt.stderr || true    # Overrides 'set -e'
+if [ $(wc -c < /tmp/apt.stderr) -gt 82 ]; then    # apt.stderr typically contains exactly 82 characters when there are no errors, no matter the primary locale, i.e. 3-line file "\nWARNING: apt does not have a stable CLI interface. Use with caution in scripts.\n\n" ...OR... in other cases more than 82, e.g. many lines of errors when apt is busy/locked/offline/etc
+    echo -e "'apt update' FAILED. VERIFY YOU'RE ONLINE and resolve all errors below:\n"
+    cat /tmp/apt.stderr
+    exit 1
+elif grep -q 'apt list --upgradable' /tmp/apt.stdout; then    # apt.stdout typically contains {"All packages are up to date.\n" [even if primary locale is French & Hindi!], "Todos los paquetes están actualizados.\n", "所有软件包均为最新。\n"} ...OR... {"5 packages can be upgraded. Run 'apt list --upgradable' to see them.\n" [even if primary locale is French & Hindi!], "Se puede actualizar 1 paquete. Ejecute «apt list --upgradable» para verlo.\n", "有 1 个软件包可以升级。请执行 ‘apt list --upgradable’ 来查看它们。\n"}
+    cat /tmp/apt.stdout
+    if [ "$INTERACTIVE" == 1 ]; then
+        echo -e "\nYour OS will now be upgraded...this takes time. THEN IT WILL AUTO-REBOOT.\n"
+        echo -n "Hit [ENTER] to confirm you'll RUN 'sudo iiab' AFTER IT REBOOTS: "
+        read ans < /dev/tty
+        echo
+        $APT_PATH -y dist-upgrade
+        reboot
+        exit 0    # Nec to avoid both output lines below (that confuse implementers!)
+    else
+        $APT_PATH -y dist-upgrade
+    fi
+fi
+cat /tmp/apt.stdout    # "All packages are up to date.\n"
+T_apt=`date`
 
 # L. Educate Implementers prior to rebooting!
 echo -e "\n\n         ┌───────────────────────────────────────────────────────────┐"
@@ -507,9 +323,6 @@ echo -e "global community, learning from other initiatives in your region and be
 #echo -e "(over Wi-Fi anyway) until you later run 'iiab-hotspot-off'.  CAVEAT: these"
 #echo -e "two commands only work with Raspberry Pi as of 2019-09-30.\n"
 
-if [ -f /etc/rpi-issue ]; then
-    check_kernel
-fi
 # cleanup
 if [ -f $SELFUPDATE_SCRIPT ]; then
     rm $SELFUPDATE_SCRIPT
@@ -518,11 +331,10 @@ T_End=`date`
 echo "iiab-upgrade run start: $T_Start"
 echo "time to self update:    $T_self"
 echo "time to revision check: $T_check"
-echo "time to apt upgrade:    $T_apt"
 echo "time to ansible:        $T_ansible"
 echo "time to iiab:           $T_iiab"
 echo "time to admin-console   $T_console"
-echo "time to kailte config:  $T_kalite"
+echo "time to apt upgrade:    $T_apt"
 echo "iiab-upgrade run end:   $T_End"
 
 if [ $INTERACTIVE == 1 ]; then
