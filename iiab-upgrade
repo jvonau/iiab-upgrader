@@ -1,0 +1,349 @@
+#!/bin/bash
+# jvonau
+set -e                                   # Exit on error (avoids snowballing)
+export DEBIAN_FRONTEND=noninteractive    # Bypass (most!) interactive questions
+SCRIPT=iiab-upgrade
+RELEASE=1
+CURR_VER=""             # Ansible version you currently have installed
+GOOD_VER="2.10.1"       # Trigger point for anisble forced reinstall
+BASEDIR=/opt/iiab
+CONFDIR=/etc/iiab
+FLAGDIR=$CONFDIR/install-flags
+IIABENV=$CONFDIR/iiab.env
+IIABSTATE=$CONFDIR/iiab_state.yml
+APT_PATH=/usr/bin/apt    # Avoids problematic /usr/local/bin/apt on Linux Mint
+REINSTALL=""
+INTERACTIVE=0
+UPDATE=0
+MASTER=1
+SELFUPDATE_SCRIPT="/tmp/.updateScript.sh"
+
+# scrape the command line
+if [ "$1" = "--interactive" ]; then
+    shift 1
+    INTERACTIVE=1
+fi
+
+if [ "$1" = "--upgrade" ]; then
+    shift 1
+    rm $FLAGS/iiab*complete || true
+    UPDATE=1
+#    REINSTALL="--reinstall"
+fi
+
+if [ "$1" = "--reinstall" ]; then
+    rm $FLAGS/iiab*complete || true
+    REINSTALL="--reinstall"
+fi
+
+# Everything else needs to be run as root
+if [ $(id -u) -ne 0 ]; then
+    echo -e "$SCRIPT must be run as root. Try 'sudo $SCRIPT'\n"
+    exit 1
+fi
+
+# Subroutines for upgrade logic
+check_branch(){
+    git -C $BASEDIR/iiab branch | grep \* | grep release-7 | wc -l
+}
+
+function use_master(){
+    cd $BASEDIR
+    if [ -d iiab ]; then
+        cd iiab
+        git checkout -b master &> /dev/null || true # covers older curls of release-7.0
+        git config branch.master.remote origin || true # covers older curls of release-7.0
+        git config branch.master.merge refs/heads/master || true # covers older curls of release-7.0
+    fi
+    cd $BASEDIR
+    if [ -d iiab-admin-console ]; then
+        cd iiab-admin-console
+        git checkout -b master &> /dev/null || true # covers older curls of release-7.0
+        git config branch.master.remote origin || true # covers older curls of release-7.0
+        git config branch.master.merge refs/heads/master || true # covers older curls of release-7.0
+    fi
+}
+
+function upgrade_source(){
+    # assumes working dir is /opt/iiab/iiab just after the git pull
+    echo -e "\n checking upgrade source"
+    if [ -f upgrade_roles ]; then
+        echo " IIAB playing nice"
+        NEWREV=$(grep iiab_revision vars/default_vars.yml | awk '{print $1}')
+        upg_path=""
+    else
+        echo " IIAB still not playing nice"
+        for REV in $(cat $BASEDIR/iiab-upgrader/upgrade_roles | awk '{print $1}'); do
+            NEWREV=$REV
+        done
+        upg_path=$BASEDIR/iiab-upgrader/
+    fi
+}
+
+function update_master(){
+    cd $BASEDIR
+    if [ -d iiab ]; then
+        cd iiab
+        echo -e "\nUpdating iiab"
+        git checkout master
+        git pull -q
+    fi
+    cd $BASEDIR
+    if [ -d iiab-admin-console ]; then
+        echo -e "\nUpdating iiab-admin-console"
+        cd iiab-admin-console
+        git checkout master
+        git pull -q
+    fi
+}
+
+function check_revision(){
+    if [ -f $IIABENV ]; then
+        source $IIABENV
+        OLDREV=$IIAB_REVISION
+        upgrade_source
+        if [ $NEWREV -gt $OLDREV ] && [ $STAGE -eq 9 ]; then
+            echo -e "\nNEW IIAB Revison $NEWREV Found\n"
+            UPDATE=1
+        fi
+    fi
+}
+
+function update_self() {
+    echo " *** Performing self-update"
+    cd $BASEDIR
+    if [ -d iiab-upgrader ]; then
+        echo -e "\nUpdating iiab-upgrader"
+        cd iiab-upgrader
+        git checkout main
+        git pull -q
+        NEW_VERSION=$(grep RELEASE $SCRIPT | awk -F = '{print $2}' | head -n 1)
+        cp $SCRIPT /usr/sbin/$SCRIPT
+        echo "Latest $SCRIPT now installed"
+        if [ $NEW_VERSION -gt $RELEASE ]; then
+            echo " *** Relaunching $SCRIPT after update"
+            cat > "$SELFUPDATE_SCRIPT" << EOF
+#!/bin/bash
+exec /usr/sbin/$SCRIPT
+EOF
+            exec /bin/bash $SELFUPDATE_SCRIPT
+        else
+            echo "Latest $SCRIPT is already running skipping re-exec"
+        fi
+    fi
+}
+
+# Subroutine compares software version numbers.  Generates rare false positives
+# like "1.0 > 1" and "2.4.0 > 2.4".  Avoid risks by structuring conditionals w/
+# a consistent # of decimal points e.g. "if version_gt w.x.y.z a.b.c.d; then"
+version_gt() { [ "$(printf '%s\n' "$@" | sort -V | head -1)" != "$1" ]; }
+
+# start exec here
+T_Start=`date`
+update_self
+T_self=`date`
+
+if [ `check_branch` -gt 0 ]; then
+    if whiptail --yesno "\nFound release-7.X branch would you like (re)install using the latest master?" 20 60 2 3>&1 1>&2 2>&3; then
+        echo "matched yes for master"
+        use_master
+    else
+        echo "remaning on release-7.X branch updating"
+        cd $BASEDIR/iiab
+        MASTER=0
+        git pull -q
+    fi
+fi
+
+if [ $MASTER == 1 ]; then
+    update_master
+fi
+check_revision
+T_check=`date`
+if [ -f $FLAGDIR/iiab-complete ] && [ $UPDATE == 0 ]; then
+    echo -e "\n\nIIAB INSTALLATION (/usr/sbin/iiab) IS ALREADY COMPLETE -- per existence of:"
+    echo -e "$FLAGDIR/iiab-complete -- nothing to do.\n"
+    exit 0
+fi
+
+# Educate implementer while waiting for 'apt update'
+echo -e "\n\n ██████████████████████████████████████████████████████████████████████████████████████"
+echo -e " ██                                                                                  ██"
+echo -e " ██  RUN 'sudo iiab-upgrade' IF THIS INSTALL SCRIPT EVER FAILS, TO TRY TO CONTINUE!  ██"
+echo -e " ██                                                                                  ██"
+echo -e " ██████████████████████████████████████████████████████████████████████████████████████"
+echo -e "\n"
+if [ $INTERACTIVE == 1 ]; then
+    echo -ne "\nHit [ENTER] to confirm you'll TRY TO RERUN 'sudo iiab-upgrade' IF THERE IS A PROBLEM: "
+    read ans < /dev/tty
+fi
+
+# think version_gt is choking on 2913 vs 2101 with the .'s removed but my 2.10.1 install skipped
+# ansible correctly when good_ver was 2.9.13. Changed back on the fly to 2.9.13 while live testing
+# and the install appears to not skip when 2.9.13 == 2.9.13 and we end up with the noted apt error.
+if ! [ $(command -v ansible-playbook) ]; then    # "command -v" is POSIX compliant; also catches built-in commands like "cd"
+    echo -e "Install Ansible..."
+    $BASEDIR/iiab/scripts/ansible
+else
+    CURR_VER=`ansible --version | head -1 | awk '{print $2}'`    # To match iiab-install.  Was: CURR_VER=`ansible --version | head -n 1 | cut -f 2 -d " "`
+    echo -e "\n\nCURRENTLY INSTALLED ANSIBLE: $CURR_VER"
+    if version_gt $CURR_VER $GOOD_VER || [ $CURR_VER == $GOOD_VER ]; then
+        echo -e "$CURR_VER is >= $GOOD_VER, skipping install!"
+    else
+        echo -e "(Re)Install Ansible..."
+        $APT_PATH -y remove ansible
+        $BASEDIR/iiab/scripts/ansible
+    fi
+fi
+T_ansible=`date`
+
+######################### INTERACTIVE STUFF IS ABOVE #########################
+
+# I. Install Ansible + 2 IIAB repos
+#echo -e "\n\nINSTALL ANSIBLE + CORE IIAB SOFTWARE + ADMIN CONSOLE / CONTENT PACK MENUS...\n"
+
+echo -e "\n┌──────────────────────────────────────────────────────────────────────────────┐"
+echo -e "│                                                                              │"
+echo -e "│   NOW UPGRADE IIAB SOFTWARE! If glitches arise (connectivity or otherwise)   │"
+echo -e "│                                                                              │"
+echo -e "│       PLEASE TRY TO CONTINUE BY RE-RUNNING SCRIPT 'sudo iiab-upgrade'        │"
+echo -e "│                                                                              │"
+echo -e "└──────────────────────────────────────────────────────────────────────────────┘"
+cd $BASEDIR/iiab/
+if [ $UPDATE == 1 ]; then
+    echo "upg_path is $upg_path"
+    echo "OLDREV is $OLDREV"
+    input="$upg_path/upgrade_roles"
+    while IFS= read -r REV
+    do
+        echo "REV is $REV"
+        if [ $(echo $REV | awk '{print $1}') -gt $OLDREV ]; then
+            echo "found REV $REV"
+            force=$(echo $REV | awk '{print $2}')
+            if [ "$force" == "calibre-web" ]; then # role directory & installed marker differ
+                force=calibreweb
+            elif [ "$force" == "osm-vector-maps" ]; then # role directory & installed marker differ
+                force=osm_vector_maps
+            fi
+            echo -e "REV has $force - removing from iiab_state.yml\\n"
+            sed -i "/^$force/d" $IIABSTATE
+        fi
+    done < "$input"
+
+    ./iiab-configure
+    if ! [ -f upgrade_roles ]; then
+        echo "manually update $IIABENV with IIAB_REVISION while 2500 is sidelined"
+        sed -i "s/^IIAB_REVISION=.*/IIAB_REVISION=$NEWREV/" $IIABENV
+    fi
+else
+    ./iiab-install $REINSTALL
+fi
+T_iiab=`date`
+echo -e "Install Admin Console... (also runs iiab-get-kiwix-cat to d/l Kiwix catalog, and installs Dynamic Menuing for /library/www/html/home/index.html)\n"
+if ! grep -q '^admin_console_install:\s\+[fF]alse\b' /etc/iiab/local_vars.yml ; then
+    if [ ! -f $FLAGDIR/iiab-admin-console-complete ] || [ $UPDATE == 1 ]; then
+        cd $BASEDIR/iiab-admin-console
+        ./install
+        touch $FLAGDIR/iiab-admin-console-complete
+    else
+        echo -e "ADMIN CONSOLE INSTALLATION IS ALREADY COMPLETE -- per existence of:"
+        echo -e "$FLAGDIR/iiab-admin-console-complete\n"
+    fi
+    if grep -q '^admin_console_enabled: False' /etc/iiab/local_vars.yml ; then
+        echo -e "'admin_console_enabled: False' is in /etc/iiab/local_vars.yml"
+        echo -e "...so let's try to DISABLE & STOP Admin Console's iiab-cmdsrv.service"
+        systemctl disable iiab-cmdsrv
+        systemctl stop iiab-cmdsrv
+    fi
+else
+    echo -e "LET'S NOT TRY TO INSTALL ADMIN CONSOLE -- because:"
+    echo -e "'admin_console_install: False' is in /etc/iiab/local_vars.yml\n"
+fi
+T_console=`date`
+
+touch $FLAGDIR/iiab-complete
+echo -e "\n\n'apt update' is checking for OS updates...\n"
+#echo -e "2019-07-11 TEMP WORKAROUND FOR RASPBIAN BUSTER'S testing->stable apt GLITCH...\nDetails @ https://github.com/iiab/iiab/issues/1856\n"
+#apt -y update || true    # Overrides 'set -e'
+#echo -e "\nNOW THE REAL 'apt update' WILL RUN...\n"
+
+# catch's ansible updates when apt runs
+$APT_PATH -qq update > /tmp/apt.stdout 2> /tmp/apt.stderr || true    # Overrides 'set -e'
+if [ $(wc -c < /tmp/apt.stderr) -gt 82 ]; then    # apt.stderr typically contains exactly 82 characters when there are no errors, no matter the primary locale, i.e. 3-line file "\nWARNING: apt does not have a stable CLI interface. Use with caution in scripts.\n\n" ...OR... in other cases more than 82, e.g. many lines of errors when apt is busy/locked/offline/etc
+    echo -e "'apt update' FAILED. VERIFY YOU'RE ONLINE and resolve all errors below:\n"
+    cat /tmp/apt.stderr
+    exit 1
+elif grep -q 'apt list --upgradable' /tmp/apt.stdout; then    # apt.stdout typically contains {"All packages are up to date.\n" [even if primary locale is French & Hindi!], "Todos los paquetes están actualizados.\n", "所有软件包均为最新。\n"} ...OR... {"5 packages can be upgraded. Run 'apt list --upgradable' to see them.\n" [even if primary locale is French & Hindi!], "Se puede actualizar 1 paquete. Ejecute «apt list --upgradable» para verlo.\n", "有 1 个软件包可以升级。请执行 ‘apt list --upgradable’ 来查看它们。\n"}
+    cat /tmp/apt.stdout
+    if [ "$INTERACTIVE" == 1 ]; then
+        echo -e "\nYour OS will now be upgraded...this takes time. THEN IT WILL AUTO-REBOOT.\n"
+        echo -n "Hit [ENTER] to confirm you'll RUN 'sudo iiab' AFTER IT REBOOTS: "
+        read ans < /dev/tty
+        echo
+        $APT_PATH -y dist-upgrade
+        reboot
+        exit 0    # Nec to avoid both output lines below (that confuse implementers!)
+    else
+        $APT_PATH -y dist-upgrade
+    fi
+fi
+cat /tmp/apt.stdout    # "All packages are up to date.\n"
+T_apt=`date`
+
+# L. Educate Implementers prior to rebooting!
+echo -e "\n\n         ┌───────────────────────────────────────────────────────────┐"
+echo -e "         │                                                           │"
+echo -e "         │   INTERNET-IN-A-BOX (IIAB) SOFTWARE INSTALL IS COMPLETE   │"
+echo -e "         │                                                           │"
+echo -e "         └───────────────────────────────────────────────────────────┘\n"
+
+echo -e "(1A) A couple minutes after you reboot (below) try to connect any laptop to"
+echo -e 'Wi-Fi hotspot "Internet in a Box".  If this works, verify that you can browse'
+echo -e "to http://box or http://box.lan or http://172.18.96.1\n"
+
+echo -e "(1B) IF THOSE 3 DON'T WORK, try http://box.local from any device connected to"
+echo -e "your usual network.  Or try http://localhost from your IIAB itself!\n"
+
+echo -e "(1C) IF ALL 5 ABOVE DON'T WORK, ask the person who set up the network/router"
+echo -e "in your building for the IP address of your IIAB, so you can browse to it"
+echo -e "using (something like) http://192.168.0.100\n"
+
+echo -e '(2) ADD CONTENT using http://box.lan/admin (changing "box.lan" to be as above!)'
+echo -e 'PLEASE READ "What are the default passwords?" and "How do I customize my'
+echo -e 'Internet-in-a-Box home page?" at http://FAQ.IIAB.IO\n'
+
+echo -e "(3) Please run the 'iiab-diagnostics' command, to generate a URL summarizing"
+echo -e "your IIAB configuration, for volunteers seeking to help you.  We strongly"
+echo -e "encourage you to share this URL also when connecting with others in the IIAB"
+echo -e "global community, learning from other initiatives in your region and beyond!\n"
+
+#echo -e "(3) If you're installing IIAB over Wi-Fi (instead of Ethernet) remember to run"
+#echo -e "'iiab-hotspot-on' at the VERY END, when you're ready to ACTIVATE YOUR IIAB's"
+#echo -e "INTERNAL WI-FI HOTSPOT.  CAUTION: this permanently kills your IIAB's Internet"
+#echo -e "(over Wi-Fi anyway) until you later run 'iiab-hotspot-off'.  CAVEAT: these"
+#echo -e "two commands only work with Raspberry Pi as of 2019-09-30.\n"
+
+# cleanup
+if [ -f $SELFUPDATE_SCRIPT ]; then
+    rm $SELFUPDATE_SCRIPT
+fi
+T_End=`date`
+echo "iiab-upgrade run start: $T_Start"
+echo "time to self update:    $T_self"
+echo "time to revision check: $T_check"
+echo "time to ansible:        $T_ansible"
+echo "time to iiab:           $T_iiab"
+echo "time to admin-console   $T_console"
+echo "time to apt upgrade:    $T_apt"
+echo "iiab-upgrade run end:   $T_End"
+
+if [ $INTERACTIVE == 1 ]; then
+    echo -ne "HIT [Y] [Enter] TO REBOOT, [Enter] to exit, CONFIRMING YOU'VE" '"photographed" THE ABOVE PARAGRAPHS: '
+    ans=n
+    read ans < /dev/tty
+    if [ "$ans" == "y" ] || [ "$ans" == "Y" ]; then
+        reboot
+    fi
+fi
+echo -e "Remember to reboot"
+exit 0

@@ -1,4 +1,0 @@
-alias xs-remote-on=“systemctl enable openvpn@xscenet; systemctl start openvpn@xscenet”
-alias xs-remote-off=“systemctl disable openvpn@xscenet; systemctl stop openvpn@xscenet”
-
-

@@ -1,0 +1,14 @@
+#!/bin/bash
+set -e
+# "set -e" to exit on error (avoids snowballing)
+export DEBIAN_FRONTEND=noninteractive
+if ! [ -f /usr/sbin/iiab-upgrade ]; then
+    apt-get install -y git
+    mkdir -p /opt/iiab
+    # Get the extras
+    cd /opt/iiab
+    git clone https://github.com/jvonau/iiab-upgrader --depth 1
+    cp --remove-destination iiab-upgrader/iiab-upgrade /usr/sbin/iiab-upgrade
+fi
+/usr/sbin/iiab-upgrade
+
