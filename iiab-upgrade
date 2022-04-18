@@ -115,7 +115,7 @@ function update_self() {
     if [ -d iiab-upgrader ]; then
         echo -e "\nUpdating iiab-upgrader"
         cd iiab-upgrader
-        git checkout master
+        git checkout main
         git pull -q
         NEW_VERSION=$(grep RELEASE $SCRIPT | awk -F = '{print $2}' | head -n 1)
         cp $SCRIPT /usr/sbin/$SCRIPT
