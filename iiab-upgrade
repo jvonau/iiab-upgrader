@@ -277,7 +277,7 @@ elif grep -q 'apt list --upgradable' /tmp/apt.stdout; then    # apt.stdout typic
     cat /tmp/apt.stdout
     if [ "$INTERACTIVE" == 1 ]; then
         echo -e "\nYour OS will now be upgraded...this takes time. THEN IT WILL AUTO-REBOOT.\n"
-        echo -n "Hit [ENTER] to confirm you'll RUN 'sudo iiab' AFTER IT REBOOTS: "
+        echo -n "Hit [ENTER] to continue"
         read ans < /dev/tty
         echo
         $APT_PATH -y dist-upgrade
