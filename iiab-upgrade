@@ -32,9 +32,9 @@ if [ "$1" = "--upgrade" ]; then
 #    REINSTALL="--reinstall"
 fi
 
-if [ "$1" = "--reinstall" ]; then
-    rm $FLAGS/iiab*complete || true
-    REINSTALL="--reinstall"
+if [ "$1" = "--iiab-admin" ]; then
+    #rm $FLAGS/iiab*complete || true
+    REINSTALL=1
 fi
 
 # Everything else needs to be run as root
@@ -89,12 +89,14 @@ function update_master(){
         git checkout master
         git pull -q
     fi
-    cd $BASEDIR
-    if [ -d iiab-admin-console ]; then
-        echo -e "\nUpdating iiab-admin-console"
-        cd iiab-admin-console
-        git checkout master
-        git pull -q
+    if [ $REINSTALL == 1 ]; then
+        cd $BASEDIR
+        if [ -d iiab-admin-console ]; then
+            echo -e "\nUpdating iiab-admin-console"
+            cd iiab-admin-console
+            git checkout master
+            git pull -q
+        fi
     fi
 }
 
@@ -240,13 +242,11 @@ if [ $UPDATE == 1 ]; then
         echo "manually update $IIABENV with IIAB_REVISION while 2500 is sidelined"
         sed -i "s/^IIAB_REVISION=.*/IIAB_REVISION=$NEWREV/" $IIABENV
     fi
-else
-    ./iiab-install $REINSTALL
 fi
 T_iiab=`date`
 echo -e "Install Admin Console... (also runs iiab-get-kiwix-cat to d/l Kiwix catalog, and installs Dynamic Menuing for /library/www/html/home/index.html)\n"
 if ! grep -q '^admin_console_install:\s\+[fF]alse\b' /etc/iiab/local_vars.yml ; then
-    if [ ! -f $FLAGDIR/iiab-admin-console-complete ] || [ $UPDATE == 1 ]; then
+    if [ ! -f $FLAGDIR/iiab-admin-console-complete ] || [ $REINSTALL == 1 ]; then
         cd $BASEDIR/iiab-admin-console
         ./install
         touch $FLAGDIR/iiab-admin-console-complete
@@ -266,7 +266,7 @@ else
 fi
 T_console=`date`
 
-touch $FLAGDIR/iiab-complete
+#touch $FLAGDIR/iiab-complete
 echo -e "\n\n'apt update' is checking for OS updates...\n"
 #echo -e "2019-07-11 TEMP WORKAROUND FOR RASPBIAN BUSTER'S testing->stable apt GLITCH...\nDetails @ https://github.com/iiab/iiab/issues/1856\n"
 #apt -y update || true    # Overrides 'set -e'
