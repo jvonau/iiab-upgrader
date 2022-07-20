@@ -221,9 +221,10 @@ if [ $UPDATE == 1 ]; then
     while IFS= read -r REV
     do
         echo "REV is $REV"
-        if [ $(echo $REV | awk '{print $1}') -gt $OLDREV ]; then
-            echo "found REV $REV"
-            force=$(echo $REV | awk '{print $2}')
+        NUM=$(echo "${REV}" | awk '{print $1}')
+        if [ "$NUM" -gt "$OLDREV" ]; then
+            echo "found NEW REV $REV"
+            force=$(echo "${REV}" | awk '{print $2}')
             if [ "$force" == "calibre-web" ]; then # role directory & installed marker differ
                 force=calibreweb
             elif [ "$force" == "osm-vector-maps" ]; then # role directory & installed marker differ
