@@ -3,6 +3,7 @@
 set -e                                   # Exit on error (avoids snowballing)
 export DEBIAN_FRONTEND=noninteractive    # Bypass (most!) interactive questions
 SCRIPT=iiab-upgrade
+REPO_URL=https://github.com/jvonau/iiab-upgrader
 RELEASE=1
 CURR_VER=""             # Ansible version you currently have installed
 GOOD_VER="2.10.1"       # Trigger point for anisble forced reinstall
@@ -26,7 +27,7 @@ fi
 
 if [ "$1" = "--upgrade" ]; then
     shift 1
-    rm $FLAGS/iiab*complete || true
+    #rm $FLAGS/iiab*complete || true
     UPDATE=1
 #    REINSTALL="--reinstall"
 fi
@@ -52,15 +53,15 @@ function use_master(){
     if [ -d iiab ]; then
         cd iiab
         git checkout -b master &> /dev/null || true # covers older curls of release-7.0
-        git config branch.master.remote origin || true # covers older curls of release-7.0
-        git config branch.master.merge refs/heads/master || true # covers older curls of release-7.0
+        #git config branch.master.remote origin || true # covers older curls of release-7.0
+        #git config branch.master.merge refs/heads/master || true # covers older curls of release-7.0
     fi
     cd $BASEDIR
     if [ -d iiab-admin-console ]; then
         cd iiab-admin-console
         git checkout -b master &> /dev/null || true # covers older curls of release-7.0
-        git config branch.master.remote origin || true # covers older curls of release-7.0
-        git config branch.master.merge refs/heads/master || true # covers older curls of release-7.0
+        #git config branch.master.remote origin || true # covers older curls of release-7.0
+        #git config branch.master.merge refs/heads/master || true # covers older curls of release-7.0
     fi
 }
 
@@ -112,24 +113,27 @@ function check_revision(){
 function update_self() {
     echo " *** Performing self-update"
     cd $BASEDIR
+    echo -e "\nUpdating iiab-upgrader"
     if [ -d iiab-upgrader ]; then
-        echo -e "\nUpdating iiab-upgrader"
         cd iiab-upgrader
         git checkout main
         git pull -q
-        NEW_VERSION=$(grep RELEASE $SCRIPT | awk -F = '{print $2}' | head -n 1)
-        cp $SCRIPT /usr/sbin/$SCRIPT
-        echo "Latest $SCRIPT now installed"
-        if [ $NEW_VERSION -gt $RELEASE ]; then
-            echo " *** Relaunching $SCRIPT after update"
-            cat > "$SELFUPDATE_SCRIPT" << EOF
+    else
+        git clone $REPO_URL
+        cd iiab-upgrader
+    fi
+    NEW_VERSION=$(grep RELEASE $SCRIPT | awk -F = '{print $2}' | head -n 1)
+    cp $SCRIPT /usr/sbin/$SCRIPT
+    echo "Latest $SCRIPT now installed"
+    if [ $NEW_VERSION -gt $RELEASE ]; then
+        echo " *** Relaunching $SCRIPT after update"
+        cat > "$SELFUPDATE_SCRIPT" << EOF
 #!/bin/bash
 exec /usr/sbin/$SCRIPT
 EOF
-            exec /bin/bash $SELFUPDATE_SCRIPT
-        else
-            echo "Latest $SCRIPT is already running skipping re-exec"
-        fi
+        exec /bin/bash $SELFUPDATE_SCRIPT
+    else
+        echo "Latest $SCRIPT is already running skipping re-exec"
     fi
 }
 
@@ -191,7 +195,7 @@ else
         echo -e "$CURR_VER is >= $GOOD_VER, skipping install!"
     else
         echo -e "(Re)Install Ansible..."
-        $APT_PATH -y remove ansible
+        #$APT_PATH -y remove ansible
         $BASEDIR/iiab/scripts/ansible
     fi
 fi
