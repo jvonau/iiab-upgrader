@@ -4,7 +4,7 @@ set -e                                   # Exit on error (avoids snowballing)
 export DEBIAN_FRONTEND=noninteractive    # Bypass (most!) interactive questions
 SCRIPT=iiab-upgrade
 REPO_URL=https://github.com/jvonau/iiab-upgrader
-RELEASE=2
+RELEASE=3
 CURR_VER=""             # Ansible version you currently have installed
 GOOD_VER="2.10.1"       # Trigger point for anisble forced reinstall
 BASEDIR=/opt/iiab
@@ -89,7 +89,7 @@ function update_master(){
         git checkout master
         git pull -q
     fi
-    if [ $REINSTALL == 1 ]; then
+    if [ "$REINSTALL" == 1 ]; then
         cd $BASEDIR
         if [ -d iiab-admin-console ]; then
             echo -e "\nUpdating iiab-admin-console"
@@ -246,7 +246,7 @@ fi
 T_iiab=`date`
 echo -e "Install Admin Console... (also runs iiab-get-kiwix-cat to d/l Kiwix catalog, and installs Dynamic Menuing for /library/www/html/home/index.html)\n"
 if ! grep -q '^admin_console_install:\s\+[fF]alse\b' /etc/iiab/local_vars.yml ; then
-    if [ ! -f $FLAGDIR/iiab-admin-console-complete ] || [ $REINSTALL == 1 ]; then
+    if [ ! -f $FLAGDIR/iiab-admin-console-complete ] || [ "$REINSTALL" == 1 ]; then
         cd $BASEDIR/iiab-admin-console
         ./install
         touch $FLAGDIR/iiab-admin-console-complete
